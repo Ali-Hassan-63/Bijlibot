@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BijliBot – Electricity Bill Assistant (Prototype)</title>
+<style>
+  :root{--bg:#eef2f7;--card:#fff;--ink:#1c2733;--muted:#6b7a8c;--brand:#0b6e4f;--brand2:#e8f5ef;--user:#0b6e4f;--warn:#b45309;--line:#d9e1ea}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);display:flex;justify-content:center;min-height:100vh}
+  .app{width:100%;max-width:440px;height:100vh;max-height:760px;margin:auto;background:var(--card);display:flex;flex-direction:column;box-shadow:0 8px 30px rgba(0,0,0,.15);border-radius:14px;overflow:hidden}
+  header{background:var(--brand);color:#fff;padding:12px 14px;display:flex;align-items:center;gap:10px}
+  .avatar{width:38px;height:38px;border-radius:50%;background:#fff;color:var(--brand);display:flex;align-items:center;justify-content:center;font-size:20px}
+  header h1{font-size:16px;margin:0}
+  header small{opacity:.85;display:block;font-size:12px}
+  .status{margin-left:auto;font-size:11px;background:rgba(255,255,255,.2);padding:3px 8px;border-radius:10px}
+  .toolbar{display:flex;gap:6px;padding:6px 10px;border-bottom:1px solid var(--line);background:#fafcfe}
+  .toolbar button{flex:1;font-size:12px;padding:6px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer;color:var(--ink)}
+  .toolbar button:hover{background:var(--brand2)}
+  #chat{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth}
+  .msg{max-width:84%;padding:10px 12px;border-radius:14px;font-size:14px;line-height:1.45;white-space:pre-line;animation:in .2s ease}
+  @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .bot{background:var(--brand2);align-self:flex-start;border-bottom-left-radius:4px}
+  .me{background:var(--user);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+  .card{background:#fff;border:1px solid var(--line);align-self:flex-start;border-radius:12px;padding:10px 12px;font-size:13px;width:84%}
+  .card table{width:100%;border-collapse:collapse}
+  .card td{padding:3px 0}
+  .card td:last-child{text-align:right;font-weight:600}
+  .card .total td{border-top:1px solid var(--line);padding-top:6px;font-size:15px;color:var(--brand)}
+  .warn{color:var(--warn)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;align-self:flex-start;max-width:92%}
+  .chip{border:1.5px solid var(--brand);color:var(--brand);background:#fff;padding:6px 11px;border-radius:18px;font-size:13px;cursor:pointer}
+  .chip:hover{background:var(--brand);color:#fff}
+  .chip.danger{border-color:#b91c1c;color:#b91c1c}
+  .chip.danger:hover{background:#b91c1c;color:#fff}
+  .typing{display:flex;gap:4px;padding:12px}
+  .typing span{width:7px;height:7px;background:var(--muted);border-radius:50%;animation:b 1s infinite}
+  .typing span:nth-child(2){animation-delay:.15s}.typing span:nth-child(3){animation-delay:.3s}
+  @keyframes b{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
+  .progress{font-size:11px;color:var(--muted);align-self:flex-start;margin:-4px 0 0 4px}
+  form{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line)}
+  input{flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:20px;font-size:14px;outline:none}
+  input:focus{border-color:var(--brand)}
+  form button{background:var(--brand);color:#fff;border:0;border-radius:20px;padding:0 16px;cursor:pointer;font-size:14px}
+  .hint{font-size:11px;color:var(--muted);text-align:center;padding:0 10px 8px}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="avatar">⚡</div>
+    <div><h1>BijliBot</h1><small>Your electricity bill helper</small></div>
+    <div class="status" id="status">● Online</div>
+  </header>
+  <div class="toolbar">
+    <button onclick="undo()" title="Undo last step">↶ Undo</button>
+    <button onclick="restart()" title="Start over">⟲ Restart</button>
+    <button onclick="human()" title="Talk to a person">👤 Human</button>
+    <button onclick="exitChat()" title="End chat">✕ Exit</button>
+  </div>
+  <div id="chat" aria-live="polite"></div>
+  <form id="f" autocomplete="off">
+    <input id="inp" placeholder="Type here… e.g. “my bill is too high”" aria-label="Message">
+    <button type="submit">Send</button>
+  </form>
+  <div class="hint">Prototype · demo data only · no real DISCO connection</div>
+</div>
+
+<script>
+/* ---------- Demo data (mock) ---------- */
+const SLABS=[{upto:100,rate:7.74},{upto:200,rate:10.06},{upto:300,rate:12.15},{upto:700,rate:19.10},{upto:Infinity,rate:22.65}];
+const BILL={ref:"12 34567 8901234",name:"Demo Customer",month:"September 2026",units:312,due:"20 Oct 2026",prev:5480};
+const APPL={fan:{w:75,label:"Ceiling fan"},ac:{w:1500,label:"1-ton AC"},fridge:{w:150,label:"Refrigerator"},iron:{w:1000,label:"Iron"},tv:{w:100,label:"LED TV"},bulb:{w:12,label:"LED bulb"},motor:{w:750,label:"Water motor"}};
+
+/* ---------- State ---------- */
+let state={flow:null,step:0,data:{}};
+let history=[];           // snapshots for Undo
+let fallbacks=0;
+const chat=document.getElementById('chat');
+
+/* ---------- Helpers ---------- */
+const $=s=>document.querySelector(s);
+function scroll(){chat.scrollTop=chat.scrollHeight}
+function addUser(t){const d=document.createElement('div');d.className='msg me';d.textContent=t;chat.appendChild(d);scroll()}
+function addBot(t,cls='bot'){const d=document.createElement('div');d.className='msg '+cls;d.textContent=t;chat.appendChild(d);scroll();return d}
+function addCard(html){const d=document.createElement('div');d.className='card';d.innerHTML=html;chat.appendChild(d);scroll()}
+function chips(list){removeChips();const w=document.createElement('div');w.className='chips';w.id='chips';
+  list.forEach(l=>{const b=document.createElement('button');b.className='chip'+(l.danger?' danger':'');b.textContent=l.t;b.onclick=()=>{send(l.v||l.t,l.t)};w.appendChild(b)});
+  chat.appendChild(w);scroll()}
+function removeChips(){const c=$('#chips');if(c)c.remove()}
+function progress(n,t){const p=document.createElement('div');p.className='progress';p.textContent=`Step ${n} of ${t}`;chat.appendChild(p)}
+function typing(ms=700){return new Promise(res=>{removeChips();const d=document.createElement('div');d.className='msg bot typing';d.innerHTML='<span></span><span></span><span></span>';chat.appendChild(d);scroll();$('#status').textContent='● Typing…';setTimeout(()=>{d.remove();$('#status').textContent='● Online';res()},ms)})}
+function snapshot(){history.push(JSON.stringify({state,html:chat.innerHTML}))}
+const MAIN=[{t:'Check my bill',v:'check my bill'},{t:'Why is it high?',v:'why is my bill high'},{t:'Estimate a bill',v:'estimate bill'},{t:'Report a problem',v:'report outage'},{t:'How to pay',v:'how to pay'}];
+
+function calc(units){let left=units,prev=0,total=0,rows=[];
+  for(const s of SLABS){if(left<=0)break;const span=Math.min(left,s.upto===Infinity?left:s.upto-prev);total+=span*s.rate;rows.push([`${span} units × Rs ${s.rate}`,Math.round(span*s.rate)]);left-=span;prev=s.upto}
+  const tax=Math.round(total*0.17);return{rows,energy:Math.round(total),tax,total:Math.round(total)+tax}}
+
+/* ---------- Intent detection (rule-based, keyword scoring) ---------- */
+const INTENTS={
+  check_bill:["check bill","my bill","bill amount","how much do i owe","due date","bill kitna","bill batao","current bill","show bill"],
+  explain_high:["high","too much","zyada","expensive","increase","barh","jump","why bill","bill zyada"],
+  estimate:["estimate","calculate","predict","appliance","units for","what if","kitna bill aye ga"],
+  outage:["outage","no power","light gone","load shedding","bijli nahi","power cut","complaint","transformer","fault","report","light nahi"],
+  payment:["pay","payment","jazzcash","easypaisa","bank","last date","kaise jama","deposit","installment"],
+  greet:["hi","hello","salam","assalam","hey"],
+  thanks:["thanks","thank you","shukria","jazak"],
+  help:["help","what can you do","options","menu"],
+  human:["human","agent","person","operator","call centre","call center","representative"],
+  restart:["restart","start over","reset"],
+  exit:["exit","bye","goodbye","quit","khuda hafiz"]
+};
+function detect(text){
+  const t=text.toLowerCase();let scores={};
+  for(const [k,words] of Object.entries(INTENTS)){let s=0;words.forEach(w=>{if(new RegExp('\\b'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b').test(t))s+=w.split(' ').length});if(s)scores[k]=s}
+  const sorted=Object.entries(scores).sort((a,b)=>b[1]-a[1]);
+  return sorted;
+}
+
+/* ---------- Offtopic / unsafe detection ---------- */
+const OFFTOPIC=["weather","cricket","movie","joke","recipe","stock","politics","gold price","girlfriend","love"];
+
+/* ---------- Dispatcher ---------- */
+async function send(text,display){
+  text=(text||'').trim();if(!text)return;
+  snapshot();
+  addUser(display||text);removeChips();
+  await typing(600);
+  if(text.startsWith('__')){return route(text)}
+  // If inside a flow, let the flow try first (but allow global commands)
+  const low=text.toLowerCase();
+  const globalCmd=detect(text).find(([k])=>['restart','exit','human'].includes(k));
+  if(globalCmd){return route(globalCmd[0])}
+  if(state.flow){return continueFlow(text)}
+  const found=detect(text);
+  if(found.length===0){return fallback(text)}
+  // multi-intent / ambiguous
+  const top=found.filter(([k])=>!['greet','thanks'].includes(k));
+  if(top.length>=2 && top[0][1]===top[1][1]){
+    fallbacks=0;
+    addBot('I think you might mean more than one thing. Which one should I do first?');
+    chips(top.slice(0,3).map(([k])=>({t:LABEL[k],v:'__'+k})));
+    return;
+  }
+  route(found[0][0]);
+}
+const LABEL={check_bill:'Check my bill',explain_high:'Why is it high?',estimate:'Estimate a bill',outage:'Report a problem',payment:'How to pay',greet:'Hello',help:'Help'};
+
+function fallback(text){
+  const low=text.toLowerCase();
+  if(OFFTOPIC.some(w=>low.includes(w))){
+    fallbacks=0;
+    addBot("That's outside what I can help with – I only deal with electricity bills, payments and power complaints. ⚡\nHere is what I can do:");
+    chips(MAIN);return;
+  }
+  fallbacks++;
+  if(fallbacks===1){
+    addBot("Sorry, I didn't quite get that. Could you say it another way? For example: “show my bill” or “light nahi hai”.");
+    chips(MAIN);
+  }else if(fallbacks===2){
+    addBot("I'm still not sure. Please pick one of these, or I can connect you to a person.");
+    chips([...MAIN.slice(0,4),{t:'Talk to a person',v:'human'}]);
+  }else{
+    fallbacks=0;human();
+  }
+}
+
+async function route(k){
+  if(k.startsWith('__'))k=k.slice(2);
+  fallbacks=0;
+  switch(k){
+    case 'greet': return welcome(false);
+    case 'help': return welcome(false);
+    case 'thanks': addBot("You're welcome! 😊 Anything else I can help with?");chips(MAIN);return;
+    case 'check_bill': return flowCheck();
+    case 'explain_high': return flowExplain();
+    case 'estimate': return flowEstimate();
+    case 'outage': return flowOutage();
+    case 'payment': return flowPay();
+    case 'human': return human();
+    case 'restart': return restart();
+    case 'exit': return exitChat();
+  }
+}
+
+/* ---------- Flows ---------- */
+function welcome(first=true){
+  addBot((first?"Assalam-o-Alaikum! I'm BijliBot ⚡\n":"")+"I can help you with:\n• Checking your bill\n• Understanding why it is high\n• Estimating a future bill\n• Reporting a power problem\n• Payment options\n\nTap a button or just type. You can press Undo, Restart, Human or Exit at any time.");
+  chips(MAIN);
+}
+
+function flowCheck(){
+  state={flow:'check',step:1,data:{}};
+  addBot("Sure. Please type your 14-digit reference number (demo: type 12 34567 8901234). Or tap the button.");
+  progress(1,2);
+  chips([{t:'Use demo reference',v:BILL.ref}]);
+}
+function continueFlow(text){
+  const f=state.flow;
+  if(f==='check'){
+    const digits=text.replace(/\D/g,'');
+    if(digits.length!==14){
+      addBot("That doesn't look like a 14-digit reference number – I got "+digits.length+" digits. Please check the top of your bill and try again.");
+      chips([{t:'Use demo reference',v:BILL.ref},{t:'Where do I find it?',v:'where find reference'}]);return}
+    state={flow:'check_confirm',step:2,data:{ref:text}};
+    addBot(`I found an account ending in ${digits.slice(-4)}. Is this the right one?`);
+    progress(2,2);
+    chips([{t:'Yes, show bill',v:'yes'},{t:'No, re-enter',v:'no'}]);return}
+  if(f==='check_confirm'){
+    if(/^(yes|y|haan|ji|han|ok)/i.test(text)){showBill();state={flow:null,step:0,data:{}};return}
+    if(/^(no|n|nahi|nai)/i.test(text)){return flowCheck()}
+    addBot("Please tap Yes or No.");chips([{t:'Yes, show bill',v:'yes'},{t:'No, re-enter',v:'no'}]);return}
+  if(f==='estimate'){return estimateStep(text)}
+  if(f==='outage'){return outageStep(text)}
+  state={flow:null,step:0,data:{}};route(detect(text)[0]?.[0]||'help');
+}
+function showBill(){
+  const c=calc(BILL.units);
+  addCard(`<b>${BILL.month} bill</b><br><span style="color:#6b7a8c">Ref: ${BILL.ref}</span><table>`+
+    c.rows.map(r=>`<tr><td>${r[0]}</td><td>Rs ${r[1].toLocaleString()}</td></tr>`).join('')+
+    `<tr><td>Taxes &amp; charges</td><td>Rs ${c.tax.toLocaleString()}</td></tr>
+     <tr class="total"><td>Total due</td><td>Rs ${c.total.toLocaleString()}</td></tr></table>
+     <div class="warn" style="margin-top:6px">Due date: ${BILL.due}</div>`);
+  addBot("Would you like to know why your bill is this amount, or how to pay it?");
+  chips([{t:'Why this amount?',v:'why is my bill high'},{t:'How to pay',v:'how to pay'},{t:'Done',v:'thanks'}]);
+}
+function flowExplain(){
+  const c=calc(BILL.units);
+  addBot(`Your bill is based on ${BILL.units} units this month. Electricity is charged in slabs: the more units you use, the higher the price per unit.\n\nYou crossed 300 units, so ${BILL.units-300} units were charged at Rs 19.10 – almost 2.5× the price of your first 100 units.`);
+  addBot("Tip: staying at or below 300 units would have saved you roughly Rs "+(c.total-calc(300).total).toLocaleString()+" this month.");
+  chips([{t:'Estimate a bill',v:'estimate bill'},{t:'Check my bill',v:'check my bill'},{t:'Done',v:'thanks'}]);
+}
+function flowEstimate(){
+  state={flow:'estimate',step:1,data:{items:[]}};
+  addBot("Let's estimate a monthly bill. Which appliance do you want to add? Tap one, or type its name.");
+  progress(1,3);
+  chips(Object.entries(APPL).map(([k,v])=>({t:v.label,v:k})));
+}
+function estimateStep(text){
+  const d=state.data,low=text.toLowerCase();
+  if(state.step===1){
+    const key=Object.keys(APPL).find(k=>low.includes(k)||low.includes(APPL[k].label.toLowerCase().split(' ').pop()));
+    if(low==='done'&&d.items.length){return estimateResult()}
+    if(!key){addBot("I don't know that appliance yet. Please choose from the list.");chips(Object.entries(APPL).map(([k,v])=>({t:v.label,v:k})));return}
+    d.cur=key;state.step=2;
+    addBot(`How many hours per day do you use the ${APPL[key].label}? (type a number, e.g. 8)`);progress(2,3);return}
+  if(state.step===2){
+    const h=parseFloat(text);
+    if(isNaN(h)||h<0||h>24){addBot("Please type hours as a number between 0 and 24.");return}
+    d.items.push({k:d.cur,h});state.step=3;
+    addBot(`Added: ${APPL[d.cur].label}, ${h} h/day. Add another appliance or finish?`);progress(3,3);
+    chips([...Object.entries(APPL).filter(([k])=>!d.items.some(i=>i.k===k)).slice(0,4).map(([k,v])=>({t:'+ '+v.label,v:k})),{t:'Finish estimate',v:'done'}]);
+    state.step=1;return}
+}
+function estimateResult(){
+  const d=state.data;let units=0;
+  d.items.forEach(i=>units+=APPL[i.k].w*i.h*30/1000);
+  units=Math.round(units);const c=calc(units);
+  addCard(`<b>Estimated monthly bill</b><table>`+d.items.map(i=>`<tr><td>${APPL[i.k].label} (${i.h} h/day)</td><td>${Math.round(APPL[i.k].w*i.h*30/1000)} u</td></tr>`).join('')+
+   `<tr class="total"><td>${units} units ≈</td><td>Rs ${c.total.toLocaleString()}</td></tr></table><div style="color:#6b7a8c;margin-top:4px">Rough estimate only. Actual bill may differ.</div>`);
+  state={flow:null,step:0,data:{}};
+  chips([{t:'Estimate again',v:'estimate bill'},{t:'Main menu',v:'help'}]);
+}
+function flowOutage(){
+  state={flow:'outage',step:1,data:{}};
+  addBot("I'm sorry about the power problem. What happened?");progress(1,3);
+  chips([{t:'No power at all',v:'No power at all'},{t:'Low / fluctuating voltage',v:'Low voltage'},{t:'Sparking / dangerous wire',v:'Danger'}]);
+}
+function outageStep(text){
+  const d=state.data,low=text.toLowerCase();
+  if(state.step===1){
+    if(low.includes('danger')||low.includes('spark')||low.includes('wire')){
+      addBot("⚠ Safety first: stay away from the wire and keep others away. If anyone is in danger, call the emergency number 1122 right now.\nI'll connect you to a person who can dispatch a team urgently.");
+      state={flow:null,step:0,data:{}};chips([{t:'Talk to a person',v:'human'}]);return}
+    d.type=text;state.step=2;
+    addBot("Which area or street are you in? (e.g. Block C, Model Town)");progress(2,3);return}
+  if(state.step===2){
+    if(text.trim().length<3){addBot("Please type your area or street name.");return}
+    d.area=text;state.step=3;
+    addBot(`Please confirm your complaint:\n• Problem: ${d.type}\n• Area: ${d.area}\n\nShall I submit it?`);progress(3,3);
+    chips([{t:'Yes, submit',v:'yes'},{t:'Change area',v:'change'},{t:'Cancel',v:'cancel'}]);return}
+  if(state.step===3){
+    if(/^(yes|y|haan|ji|han|ok|submit)/i.test(text)){
+      const id='CMP-'+Math.floor(10000+Math.random()*89999);
+      addBot(`✅ Complaint submitted.\nTicket: ${id}\nExpected response: within 4 hours.\nYou can press Undo to remove this ticket.`);
+      state={flow:null,step:0,data:{}};chips(MAIN);return}
+    if(/change/i.test(text)){state.step=2;addBot("OK, please type the correct area.");return}
+    if(/cancel|no/i.test(text)){addBot("Cancelled – nothing was submitted.");state={flow:null,step:0,data:{}};chips(MAIN);return}
+    addBot("Please tap Yes, Change area or Cancel.");return}
+}
+function flowPay(){
+  addBot("You can pay your bill through:\n• JazzCash / Easypaisa app (Bill Payment → Electricity)\n• Your bank's mobile app or ATM\n• Any authorised bank branch\n\nKeep your 14-digit reference number ready. Pay before the due date to avoid a late-payment surcharge.");
+  chips([{t:'Check my bill',v:'check my bill'},{t:'Talk to a person',v:'human'},{t:'Done',v:'thanks'}]);
+}
+
+/* ---------- Global controls ---------- */
+function human(){
+  state={flow:null,step:0,data:{}};fallbacks=0;
+  addBot("Connecting you to a human agent…\nYou can call the helpline on 118 (demo number) or I'll keep your chat for them. Average wait: about 3 minutes.\n\nPress Restart to come back to me at any time.");
+  chips([{t:'Back to menu',v:'help'}]);
+}
+function restart(){
+  history=[];state={flow:null,step:0,data:{}};fallbacks=0;chat.innerHTML='';
+  addBot("Starting fresh. 🔄");welcome(false);
+}
+function undo(){
+  if(!history.length){addBot("Nothing to undo yet.");return}
+  const s=JSON.parse(history.pop());state=s.state;chat.innerHTML=s.html;
+  const note=document.createElement('div');note.className='progress';note.textContent='↶ Last step undone';chat.appendChild(note);scroll();
+  // re-bind chips
+  document.querySelectorAll('#chips .chip').forEach(()=>{});
+  rebindChips();
+}
+function rebindChips(){
+  // chips saved as HTML lose handlers: rebuild from labels
+  const w=$('#chips');if(!w)return;
+  w.querySelectorAll('.chip').forEach(b=>{const t=b.textContent;b.onclick=()=>send(valueFor(t),t)});
+}
+function valueFor(label){
+  const all=[...MAIN,{t:'Yes, show bill',v:'yes'},{t:'No, re-enter',v:'no'},{t:'Yes, submit',v:'yes'},{t:'Cancel',v:'cancel'},{t:'Change area',v:'change'},{t:'Use demo reference',v:BILL.ref},{t:'Main menu',v:'help'},{t:'Talk to a person',v:'human'},{t:'Done',v:'thanks'}];
+  const m=all.find(x=>x.t===label);return m?m.v:label}
+function exitChat(){
+  addBot("Thank you for using BijliBot. Khuda Hafiz! 👋\nYour chat has ended. Refresh or press Restart to start again.");
+  removeChips();
+  chips([{t:'Start new chat',v:'restart'}]);
+}
+
+/* ---------- Boot ---------- */
+document.getElementById('f').addEventListener('submit',e=>{e.preventDefault();const i=$('#inp');const v=i.value;i.value='';send(v)});
+(async()=>{await typing(700);welcome(true)})();
+</script>
+</body>
+</html>
